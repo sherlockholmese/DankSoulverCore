@@ -1,0 +1,28 @@
+{
+  "id": "dankSoulverCore",
+  "name": "Dank SoulverCore",
+  "description": "Natural-language calculations and live currency conversions in the DMS launcher",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "sherlockholmestech",
+  "type": "launcher",
+  "capabilities": [
+    "launcher",
+    "calculator",
+    "currency-conversion"
+  ],
+  "component": "./SoulverLauncher.qml",
+  "trigger": "=",
+  "icon": "calculate",
+  "settings": "./SoulverSettings.qml",
+  "requires_dms": ">=1.2.0",
+  "dependencies": [
+    "soulver-cpp"
+  ],
+  "permissions": [
+    "settings_read",
+    "settings_write",
+    "process",
+    "network"
+  ]
+}

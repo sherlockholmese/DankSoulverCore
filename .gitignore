@@ -1,0 +1,29 @@
+# CMake/Ninja output
+/build/
+/build-*/
+/bin/
+/dist/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/CTestTestfile.cmake
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/install_manifest.txt
+/Testing/
+
+# QML tooling/runtime caches
+/.qmlcache/
+*.qmlc
+*.jsc
+
+# Editor and OS noise
+*.user
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
