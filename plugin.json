@@ -4,7 +4,7 @@
   "description": "Natural-language calculations and live currency conversions in the DMS launcher",
   "version": "0.1.0",
   "license": "MIT",
-  "author": "sherlockholmestech",
+  "author": "sherlockholmese",
   "type": "launcher",
   "capabilities": [
     "launcher",
