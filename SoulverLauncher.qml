@@ -18,17 +18,21 @@ QtObject {
     property int minimumCharacters: 3
     property int debounceMilliseconds: 90
     property string helperPath: ""
+    property string backend: "soulver"
     property string resourcesPath: ""
+    readonly property string backendName: backend === "numen" ? "Numen" : "SoulverCore"
 
     signal itemsChanged()
 
     property SoulverService soulver: SoulverService {
         executable: root.helperPath
+        backend: root.backend
         resourcesPath: root.resourcesPath
         enabled: root.helperPath.length > 0
 
         onResultReady: (requestId, expression, result) => {
-            if (requestId !== root.activeRequest || expression !== root.pendingQuery)
+            if (requestId !== root.activeRequest || expression !== root.pendingQuery
+                    || result.backend !== root.backend)
                 return;
 
             root.currentQuery = expression;
@@ -71,12 +75,22 @@ QtObject {
         const noTrigger = pluginService.loadPluginData(pluginId, "noTrigger", true);
         const configuredTrigger = pluginService.loadPluginData(pluginId, "trigger", "=");
         trigger = noTrigger ? "" : (configuredTrigger || "=");
+
+        // The helper starts when helperPath is first set, so everything it is started with goes
+        // first. Otherwise opening the launcher would start the wrong engine, then restart.
+        const configuredBackend = pluginService.loadPluginData(pluginId, "backend", "soulver");
+        const previousBackend = backend;
+        backend = configuredBackend === "numen" ? "numen" : "soulver";
+        resourcesPath = pluginService.loadPluginData(pluginId, "resourcesPath", "");
+
         const configuredHelper = pluginService.loadPluginData(pluginId, "helperPath", "");
         const pluginPath = pluginService.getPluginPath(pluginId);
         helperPath = configuredHelper || (pluginPath
             ? pluginPath + "/run-helper"
             : "dank-soulver-core");
-        resourcesPath = pluginService.loadPluginData(pluginId, "resourcesPath", "");
+
+        if (backend !== previousBackend)
+            _reevaluate();
 
         const configuredMinimum = parseInt(pluginService.loadPluginData(pluginId, "minimumCharacters", "3"));
         minimumCharacters = Number.isFinite(configuredMinimum) ? Math.max(1, configuredMinimum) : 3;
@@ -106,14 +120,14 @@ QtObject {
         if (currentQuery === expression)
             return currentResult ? [_toLauncherItem(expression, currentResult)] : [];
 
-        if (trigger !== "" && soulver.errorMessage) {
+        if (soulver.errorMessage && _isLikelyCalculation(expression)) {
             return [{
                 id: _itemId(expression),
-                name: "SoulverCore is unavailable",
+                name: backendName + " is unavailable",
                 icon: "material:error_outline",
                 comment: soulver.errorMessage,
                 action: "none",
-                categories: ["Soulver"]
+                categories: [backendName]
             }];
         }
 
@@ -129,6 +143,15 @@ QtObject {
 
         activeRequest = ++requestSerial;
         soulver.calculate(activeRequest, pendingQuery);
+    }
+
+    // Drops an answer from the previous engine and asks the new one the same question.
+    function _reevaluate() {
+        currentQuery = "";
+        currentResult = null;
+        if (pendingQuery)
+            queryDebounce.restart();
+        _requestLauncherRefresh();
     }
 
     function _clearQuery() {
@@ -161,7 +184,7 @@ QtObject {
             copyText: result.value,
             expression: expression,
             resultType: type,
-            categories: ["Soulver"]
+            categories: [backendName]
         };
     }
 
@@ -172,7 +195,7 @@ QtObject {
             icon: "material:calculate",
             comment: "Calculating…",
             action: "none",
-            categories: ["Soulver"]
+            categories: [backendName]
         };
     }
 
@@ -200,7 +223,7 @@ QtObject {
                 || /(dollar|euro|pound|yen|yuan|franc|rupee|won|bitcoin|ethereum)/.test(type)
                 || /[$€£¥₩₹]/.test(answer))
             return "material:currency_exchange";
-        if (type.indexOf("date") !== -1 || type.indexOf("time") !== -1
+        if (type.indexOf("date") !== -1 || type.indexOf("time") !== -1 || type.indexOf("duration") !== -1
                 || /(second|minute|hour|day|week|month|year)/.test(type))
             return "material:schedule";
         if (type.indexOf("unit") !== -1 || type.indexOf("distance") !== -1 || type.indexOf("mass") !== -1)
@@ -217,7 +240,7 @@ QtObject {
         if (item.action === "copy" && item.copyText !== undefined) {
             Quickshell.execDetached(["dms", "cl", "copy", String(item.copyText)]);
             if (typeof ToastService !== "undefined")
-                ToastService.showInfo("Soulver", "Copied " + item.copyText);
+                ToastService.showInfo(backendName, "Copied " + item.copyText);
         }
     }
 

@@ -1,8 +1,8 @@
 {
   "id": "dankSoulverCore",
   "name": "Dank SoulverCore",
-  "description": "Natural-language calculations and live currency conversions in the DMS launcher",
-  "version": "0.1.0",
+  "description": "Natural-language calculations and live currency conversions in the DMS launcher, powered by SoulverCore or Numen",
+  "version": "0.2.0",
   "license": "MIT",
   "author": "sherlockholmese",
   "type": "launcher",
@@ -16,9 +16,6 @@
   "icon": "calculate",
   "settings": "./SoulverSettings.qml",
   "requires_dms": ">=1.2.0",
-  "dependencies": [
-    "soulver-cpp"
-  ],
   "permissions": [
     "settings_read",
     "settings_write",

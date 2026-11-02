@@ -1,7 +1,7 @@
 #include <csignal>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -11,18 +11,14 @@
 
 #include <nlohmann/json.hpp>
 
-extern "C" {
-bool soulver_initialize(const char *resourcesPath);
-bool soulver_is_initialized();
-char *soulver_evaluate(const char *expression);
-}
+#include "backend.hpp"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
 
-constexpr std::string_view kVersion = "0.1.0";
+constexpr std::string_view kVersion = DANK_SOULVER_CORE_VERSION;
 constexpr std::size_t kMaximumRequestBytes = 64 * 1024;
 
 struct Options {
@@ -30,83 +26,10 @@ struct Options {
   bool jsonOutput = false;
   bool help = false;
   bool version = false;
+  std::string backend = "soulver";
   std::optional<fs::path> resources;
   std::string expression;
 };
-
-bool looksLikeResourceDirectory(const fs::path &path) {
-  std::error_code error;
-  if (!fs::is_directory(path, error))
-    return false;
-
-  return fs::is_regular_file(path / "Info.plist", error) ||
-         fs::is_regular_file(path / "en.lproj" / "Version.json", error);
-}
-
-void addCandidate(std::vector<fs::path> &candidates, const fs::path &candidate) {
-  if (!candidate.empty())
-    candidates.push_back(candidate);
-}
-
-std::vector<std::string> splitColonList(const char *value) {
-  std::vector<std::string> parts;
-  if (!value)
-    return parts;
-
-  std::stringstream stream(value);
-  std::string part;
-  while (std::getline(stream, part, ':')) {
-    if (!part.empty())
-      parts.push_back(part);
-  }
-  return parts;
-}
-
-std::optional<fs::path> executablePath() {
-  std::error_code error;
-  auto path = fs::read_symlink("/proc/self/exe", error);
-  if (error)
-    return std::nullopt;
-  return path;
-}
-
-std::optional<fs::path> locateResources(const std::optional<fs::path> &overridePath) {
-  std::vector<fs::path> candidates;
-  if (overridePath)
-    addCandidate(candidates, *overridePath);
-
-  if (const char *environmentPath = std::getenv("SOULVER_RESOURCES"))
-    addCandidate(candidates, environmentPath);
-
-  if (auto executable = executablePath()) {
-    const auto prefix = executable->parent_path().parent_path();
-    addCandidate(candidates, prefix / "share" / "soulver-core" / "resources");
-    addCandidate(candidates, prefix / "share" / "soulver-cpp" / "resources");
-    addCandidate(candidates, executable->parent_path() / "resources");
-  }
-
-  auto dataDirectories = splitColonList(std::getenv("XDG_DATA_DIRS"));
-  if (dataDirectories.empty())
-    dataDirectories = {"/usr/local/share", "/usr/share"};
-
-  for (const auto &directory : dataDirectories) {
-    addCandidate(candidates, fs::path(directory) / "soulver-core" / "resources");
-    addCandidate(candidates, fs::path(directory) / "soulver-cpp" / "resources");
-  }
-
-  // Keep standard locations even when XDG_DATA_DIRS has been customized.
-  addCandidate(candidates, "/usr/local/share/soulver-core/resources");
-  addCandidate(candidates, "/usr/share/soulver-core/resources");
-  addCandidate(candidates, "/usr/local/share/soulver-cpp/resources");
-  addCandidate(candidates, "/usr/share/soulver-cpp/resources");
-
-  for (const auto &candidate : candidates) {
-    if (looksLikeResourceDirectory(candidate))
-      return candidate;
-  }
-
-  return std::nullopt;
-}
 
 json errorPayload(std::string message, int id = 0, std::string expression = {}) {
   return {
@@ -118,33 +41,27 @@ json errorPayload(std::string message, int id = 0, std::string expression = {}) 
   };
 }
 
-json calculate(const std::string &expression, int id) {
-  char *rawResult = soulver_evaluate(expression.c_str());
-  if (!rawResult)
-    return errorPayload("SoulverCore returned no response", id, expression);
-
-  std::string encodedResult(rawResult);
-  std::free(rawResult);
-
+json calculate(Backend &backend, std::string_view backendName, const std::string &expression,
+               int id) {
+  json result;
   try {
-    auto result = json::parse(encodedResult);
-    result["id"] = id;
-    result["expression"] = expression;
-    if (!result.contains("error"))
-      result["error"] = nullptr;
-    return result;
+    result = backend.evaluate(expression);
   } catch (const std::exception &error) {
-    return errorPayload(std::string("Invalid SoulverCore response: ") + error.what(), id,
-                        expression);
+    result = errorPayload(std::string("Evaluation failed: ") + error.what());
   }
+
+  result["id"] = id;
+  result["expression"] = expression;
+  result["backend"] = backendName;
+  return result;
 }
 
 void writeJson(const json &value) {
   std::cout << value.dump() << '\n' << std::flush;
 }
 
-int runServer(const fs::path &resources) {
-  writeJson({{"event", "ready"}, {"resource_path", resources.string()}});
+int runServer(Backend &backend, std::string_view backendName) {
+  writeJson({{"event", "ready"}, {"backend", backendName}});
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -160,7 +77,7 @@ int runServer(const fs::path &resources) {
       const auto request = json::parse(line);
       const int id = request.value("id", 0);
       const std::string expression = request.value("expression", std::string{});
-      writeJson(calculate(expression, id));
+      writeJson(calculate(backend, backendName, expression, id));
     } catch (const std::exception &error) {
       writeJson(errorPayload(std::string("Invalid request: ") + error.what()));
     }
@@ -189,6 +106,12 @@ Options parseOptions(int argc, char **argv) {
       options.server = true;
     } else if (argument == "--json") {
       options.jsonOutput = true;
+    } else if (argument == "--backend") {
+      if (++index >= argc)
+        throw std::runtime_error("--backend requires a name");
+      options.backend = argv[index];
+      if (options.backend != "soulver" && options.backend != "numen")
+        throw std::runtime_error("unknown backend: " + options.backend);
     } else if (argument == "--resources") {
       if (++index >= argc)
         throw std::runtime_error("--resources requires a path");
@@ -211,7 +134,8 @@ Options parseOptions(int argc, char **argv) {
 void printHelp() {
   std::cout
       << "Usage: dank-soulver-core [OPTIONS] [EXPRESSION]\n\n"
-      << "Evaluate natural-language calculations with SoulverCore.\n\n"
+      << "Evaluate natural-language calculations with SoulverCore or Numen.\n\n"
+      << "  --backend NAME    calculation engine: soulver (default) or numen\n"
       << "  --server          read JSON requests from stdin, one per line\n"
       << "  --json            print the one-shot result as JSON\n"
       << "  --resources PATH  override SoulverCore's resource directory\n"
@@ -241,35 +165,27 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  const auto resources = locateResources(options.resources);
-  if (!resources) {
-    const std::string message =
-        "SoulverCore resources not found; pass --resources or set SOULVER_RESOURCES";
-    if (options.server)
-      writeJson({{"event", "error"}, {"error", message}});
-    else
-      std::cerr << "dank-soulver-core: " << message << '\n';
-    return 2;
-  }
-
-  if (!soulver_is_initialized() && !soulver_initialize(resources->c_str())) {
-    const std::string message = "SoulverCore initialization failed for " + resources->string();
-    if (options.server)
-      writeJson({{"event", "error"}, {"error", message}});
-    else
-      std::cerr << "dank-soulver-core: " << message << '\n';
-    return 2;
-  }
-
-  if (options.server)
-    return runServer(*resources);
-
-  if (options.expression.empty()) {
+  if (!options.server && options.expression.empty()) {
     std::cerr << "dank-soulver-core: missing expression\n";
     return 2;
   }
 
-  const auto result = calculate(options.expression, 1);
+  std::unique_ptr<Backend> backend;
+  try {
+    backend = options.backend == "numen" ? createNumenBackend(!options.server)
+                                         : createSoulverBackend(options.resources);
+  } catch (const std::exception &error) {
+    if (options.server)
+      writeJson({{"event", "error"}, {"error", error.what()}});
+    else
+      std::cerr << "dank-soulver-core: " << error.what() << '\n';
+    return 2;
+  }
+
+  if (options.server)
+    return runServer(*backend, options.backend);
+
+  const auto result = calculate(*backend, options.backend, options.expression, 1);
   if (options.jsonOutput) {
     writeJson(result);
   } else if (!result.contains("error") || result["error"].is_null() ||

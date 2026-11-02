@@ -17,10 +17,24 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Natural-language arithmetic, percentages, units, dates, time zones, and live currency conversions directly in the launcher."
+        text: "Natural-language arithmetic, percentages, units, dates, time zones, and live currency conversions directly in the launcher, powered by SoulverCore or Numen."
         wrapMode: Text.WordWrap
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
+    }
+
+    SelectionSetting {
+        id: backendSetting
+        settingKey: "backend"
+        label: "Calculation engine"
+        description: value === "numen"
+            ? "Numen is built into the plugin. Currency rates come from Vicinae."
+            : "SoulverCore requires soulver-cpp. Currency rates come from Raycast."
+        options: [
+            { label: "SoulverCore", value: "soulver" },
+            { label: "Numen", value: "numen" }
+        ]
+        defaultValue: "soulver"
     }
 
     ToggleSetting {
@@ -37,7 +51,7 @@ PluginSettings {
         visible: !noTriggerSetting.value
         settingKey: "trigger"
         label: "Trigger"
-        description: "Prefix used to explicitly invoke Soulver."
+        description: "Prefix used to explicitly invoke the calculator."
         placeholder: "="
         defaultValue: "="
     }
@@ -68,6 +82,7 @@ PluginSettings {
     }
 
     StringSetting {
+        visible: backendSetting.value === "soulver"
         settingKey: "resourcesPath"
         label: "Soulver resources"
         description: "Optional resource directory override. Usually discovered automatically."
